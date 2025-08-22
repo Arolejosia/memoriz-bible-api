@@ -91,6 +91,22 @@ def find_book_category(book_name: str) -> Optional[str]:
             return category.replace("_", " ").capitalize()
     return None
 
+def get_bible_data():
+    """
+    Loads the bible data from the JSON file if it hasn't been loaded yet.
+    """
+    global versets
+    if not versets:
+        print("Loading bible data from JSON file for the first time...")
+        try:
+            with open("segond_1910.json", "r", encoding="utf-8") as f:
+                versets = json.load(f).get("verses", [])
+            print("Bible data loaded successfully.")
+        except Exception as e:
+            print(f"CRITICAL ERROR: Could not load bible data. {e}")
+            versets = []
+    return versets
+
 @app.post("/generer-question-reference")
 def generate_reference_question(request: ReferenceQuestionRequest):
     pool = versets
@@ -212,6 +228,7 @@ def generer_jeu_depuis_texte(texte: str, niveau: str):
 # --- Routes de l'API ---
 @app.post("/jeu")
 def jeu_texte_a_trous(data: ReferenceRequest):
+    versets = get_bible_data()
     """
     Gère les passages courts et longs pour le jeu de texte à trous.
     """
