@@ -69,9 +69,20 @@ with open("segond_1910.json", "r", encoding="utf-8") as f:
 
 # Dictionnaire des catégories de livres
 BOOK_GROUPS = {
+    "ancien_testament": [
+        "Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome", "Josué", "Juges", "Ruth", "1 Samuel", "2 Samuel", "1 Rois", "2 Rois",
+        "1 Chroniques", "2 Chroniques", "Esdras", "Néhémie", "Esther", "Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques", "Ésaïe",
+        "Jérémie", "Lamentations", "Ézéchiel", "Daniel", "Osée", "Joël", "Amos", "Abdias", "Jonas", "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée",
+        "Zacharie", "Malachie"
+    ],
+    "nouveau_testament": [
+        "Matthieu", "Marc", "Luc", "Jean", "Actes", "Romains", "1 Corinthiens", "2 Corinthiens", "Galates", "Éphésiens", "Philippiens", "Colossiens", 
+        "1 Thessaloniciens", "2 Thessaloniciens", "1 Timothée", "2 Timothée", "Tite", "Philémon", "Hébreux", "Jacques", "1 Pierre", "2 Pierre", 
+        "1 Jean", "2 Jean", "3 Jean", "Jude", "Apocalypse"
+    ],
     "pentateuque": ["Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome"],
     "historiques": ["Josué", "Juges", "Ruth", "1 Samuel", "2 Samuel", "1 Rois", "2 Rois", "1 Chroniques", "2 Chroniques", "Esdras", "Néhémie", "Esther"],
-    "poetiques": ["Job", "Psaume", "Proverbes", "Ecclésiaste", "Cantique des Cantiques"],
+    "poetiques": ["Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques"],
     "prophetes_majeurs": ["Ésaïe", "Jérémie", "Lamentations", "Ézéchiel", "Daniel"],
     "prophetes_mineurs": ["Osée", "Joël", "Amos", "Abdias", "Jonas", "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée", "Zacharie", "Malachie"],
     "evangiles": ["Matthieu", "Marc", "Luc", "Jean"],
@@ -80,10 +91,11 @@ BOOK_GROUPS = {
     "epitres_generales": ["Hébreux", "Jacques", "1 Pierre", "2 Pierre", "1 Jean", "2 Jean", "3 Jean", "Jude"],
     "apocalypse": ["Apocalypse"],
 }
-
 class ReferenceQuestionRequest(BaseModel):
     difficulty: str
     source_group: Optional[str] = None
+    source_refs: Optional[List[str]] = None
+    source_book: Optional[str] = None
 
 def find_book_category(book_name: str) -> Optional[str]:
     for category, books in BOOK_GROUPS.items():
@@ -520,50 +532,74 @@ def get_single_verse(ref: str = Query(..., description="La référence biblique,
 
     raise HTTPException(status_code=404, detail=f"Verset '{ref}' non trouvé.")
 
-@app.get("/trouver-reference")
-def get_reference_question(livre: Optional[str] = Query(None, description="Le livre biblique pour limiter les questions, ex: 'Genèse'")):
+@app.post("/generer-question-reference")
+def generate_reference_question(request: ReferenceQuestionRequest):
     """
-    Génère une question pour le jeu "Trouver la Référence".
-    - Si 'livre' est fourni, les questions sont limitées à ce livre.
-    - Sinon, les questions proviennent de toute la Bible.
+    Génère une question pour le jeu "Trouver la Référence" en respectant
+    la source et la difficulté choisies par l'utilisateur.
     """
-    
-    # 1. Créer le pool de versets disponibles pour la question
-    if livre:
-        # Mode Spécifique : on filtre les versets par livre
-        pool_de_versets = [v for v in versets if v.get("book_name", "").lower() == livre.lower()]
-        if len(pool_de_versets) < 4:
-            raise HTTPException(status_code=400, detail=f"Pas assez de versets dans le livre '{livre}' pour créer un jeu.")
-    else:
-        # Mode Global : on utilise tous les versets
-        pool_de_versets = versets
+    pool = []
+    source_book_names = set()
 
-    # 2. Choisir 4 versets uniques au hasard dans le pool
-    if len(pool_de_versets) < 4:
-        raise HTTPException(status_code=400, detail="Pas assez de versets disponibles pour créer un jeu.")
-        
-    versets_choisis = random.sample(pool_de_versets, 4)
+    # 1. Déterminer le pool de versets source
+    if request.source_refs:
+        pool = [v for v in versets if v and v.get('reference') in request.source_refs]
+    elif request.source_book:
+        source_book_names = {request.source_book.lower()}
+        pool = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
+    elif request.source_group and request.source_group in BOOK_GROUPS:
+        source_book_names = {book.lower() for book in BOOK_GROUPS[request.source_group]}
+        pool = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
+    else:
+        # Si aucune source n'est spécifiée, on prend toute la Bible
+        pool = versets
+
+    if len(pool) < 4:
+        # Si le pool choisi est trop petit, on se rabat sur toute la Bible pour éviter les erreurs
+        pool = versets
+        source_book_names = set()
+
+    # 2. Choisir le verset correct dans le pool filtré
+    verset_correct = random.choice(pool)
+
+    # 3. Générer les distracteurs (mauvaises réponses) de manière intelligente
+    distracteurs = []
+    distractor_pool = []
+
+    if request.difficulty == "difficile":
+        # Difficile : Mêmes livre et chapitre, depuis le pool source
+        distractor_pool = [v for v in pool if v.get("chapter") == verset_correct.get("chapter") and v != verset_correct]
     
-    # 3. La bonne réponse est le premier verset de notre sélection aléatoire
-    verset_correct = versets_choisis[0]
-    texte_de_la_question = verset_correct.get("text", "Texte non trouvé.")
+    if request.difficulty in ["moyen", "difficile"] and len(distractor_pool) < 3:
+        # Moyen (ou fallback du difficile) : Même livre, depuis le pool source
+        distractor_pool = [v for v in pool if v.get("book_name") == verset_correct.get("book_name") and v != verset_correct]
+
+    if len(distractor_pool) < 3:
+        # Facile (ou fallback des autres) : Versets hors du groupe/livre source
+        if source_book_names:
+            distractor_pool = [v for v in versets if v.get("book_name", "").lower() not in source_book_names]
+        else: # Si la source est "Toute la Bible", on prend juste d'autres versets
+            distractor_pool = [v for v in versets if v != verset_correct]
+
+    # S'assurer d'avoir assez de distracteurs
+    if len(distractor_pool) < 3:
+        distractor_pool = [v for v in versets if v != verset_correct] # Fallback final
+
+    distracteurs = random.sample(distractor_pool, 3)
+
+    # 4. Préparer la réponse
+    texte_de_la_question = verset_correct.get("text", "")
+    reponse_correcte_ref = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
     
-    # 4. Les options sont les références des 4 versets choisis
-    options_references = [
-        f"{v.get('book_name')} {v.get('chapter')}:{v.get('verse')}" for v in versets_choisis
-    ]
-    
-    # 5. On mélange les options pour que la bonne réponse ne soit pas toujours la première
+    options_versets = distracteurs + [verset_correct]
+    options_references = [f"{v.get('book_name')} {v.get('chapter')}:{v.get('verse')}" for v in options_versets]
     random.shuffle(options_references)
-    
-    reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
 
     return {
         "question_text": texte_de_la_question,
         "options": options_references,
-        "reponse_correcte": reponse_correcte
+        "reponse_correcte": reponse_correcte_ref,
     }
-
 
 # N'oubliez pas d'inclure vos autres routes (/jeu, /verifier) ici si elles ne sont pas déjà dans le fichier.
 
