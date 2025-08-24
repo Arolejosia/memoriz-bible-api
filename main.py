@@ -532,73 +532,99 @@ def get_single_verse(ref: str = Query(..., description="La référence biblique,
 
     raise HTTPException(status_code=404, detail=f"Verset '{ref}' non trouvé.")
 
+# Fichier: main.py
+
 @app.post("/generer-question-reference")
 def generate_reference_question(request: ReferenceQuestionRequest):
-    """
-    Génère une question pour le jeu "Trouver la Référence" en respectant
-    la source et la difficulté choisies par l'utilisateur.
-    """
-    pool = []
+    # --- 1. Déterminer le pool de versets source ---
+    pool_source = versets
+    is_specific_book = request.source_book is not None
     source_book_names = set()
 
-    # 1. Déterminer le pool de versets source
-    if request.source_refs:
-        pool = [v for v in versets if v and v.get('reference') in request.source_refs]
-    elif request.source_book:
-        source_book_names = {request.source_book.lower()}
-        pool = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
-    elif request.source_group and request.source_group in BOOK_GROUPS:
-        source_book_names = {book.lower() for book in BOOK_GROUPS[request.source_group]}
-        pool = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
-    else:
-        # Si aucune source n'est spécifiée, on prend toute la Bible
-        pool = versets
+    if is_specific_book:
+        pool_source = [v for v in versets if v.get("book_name", "").lower() == request.source_book.lower()]
+    elif request.source_group:
+        source_book_names = {book.lower() for book in BOOK_GROUPS.get(request.source_group, [])}
+        pool_source = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
 
-    if len(pool) < 4:
-        # Si le pool choisi est trop petit, on se rabat sur toute la Bible pour éviter les erreurs
-        pool = versets
-        source_book_names = set()
+    if not pool_source:
+        raise HTTPException(status_code=400, detail="La source choisie est vide.")
 
-    # 2. Choisir le verset correct dans le pool filtré
-    verset_correct = random.choice(pool)
-
-    # 3. Générer les distracteurs (mauvaises réponses) de manière intelligente
-    distracteurs = []
-    distractor_pool = []
-
-    if request.difficulty == "difficile":
-        # Difficile : Mêmes livre et chapitre, depuis le pool source
-        distractor_pool = [v for v in pool if v.get("chapter") == verset_correct.get("chapter") and v != verset_correct]
-    
-    if request.difficulty in ["moyen", "difficile"] and len(distractor_pool) < 3:
-        # Moyen (ou fallback du difficile) : Même livre, depuis le pool source
-        distractor_pool = [v for v in pool if v.get("book_name") == verset_correct.get("book_name") and v != verset_correct]
-
-    if len(distractor_pool) < 3:
-        # Facile (ou fallback des autres) : Versets hors du groupe/livre source
-        if source_book_names:
-            distractor_pool = [v for v in versets if v.get("book_name", "").lower() not in source_book_names]
-        else: # Si la source est "Toute la Bible", on prend juste d'autres versets
-            distractor_pool = [v for v in versets if v != verset_correct]
-
-    # S'assurer d'avoir assez de distracteurs
-    if len(distractor_pool) < 3:
-        distractor_pool = [v for v in versets if v != verset_correct] # Fallback final
-
-    distracteurs = random.sample(distractor_pool, 3)
-
-    # 4. Préparer la réponse
+    verset_correct = random.choice(pool_source)
     texte_de_la_question = verset_correct.get("text", "")
-    reponse_correcte_ref = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
     
-    options_versets = distracteurs + [verset_correct]
-    options_references = [f"{v.get('book_name')} {v.get('chapter')}:{v.get('verse')}" for v in options_versets]
-    random.shuffle(options_references)
+    options = set()
+    reponse_correcte = ""
+
+    # --- ✅ NOUVELLE LOGIQUE EXPERTE ---
+    
+    # --- SCÉNARIO 1 : JEU SUR UN LIVRE SPÉCIFIQUE ---
+    if is_specific_book:
+        if request.difficulty == "facile": # Demande le chapitre
+            reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
+            options.add(reponse_correcte)
+            # 2 distracteurs du même livre, 1 d'un autre livre
+            pool_pertinent = {f"{v.get('book_name')} {v.get('chapter')}" for v in pool_source if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte}
+            pool_general = {f"{v.get('book_name')} {v.get('chapter')}" for v in versets if v.get("book_name") != request.source_book}
+            if len(pool_pertinent) >= 2: options.update(random.sample(list(pool_pertinent), 2))
+            if len(options) < 4 and pool_general: options.add(random.choice(list(pool_general)))
+
+        else: # Moyen et Difficile demandent la référence exacte
+            reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
+            options.add(reponse_correcte)
+            # Les distracteurs viennent tous du même livre
+            pool_distracteurs = [v for v in pool_source if v != verset_correct]
+            if len(pool_distracteurs) >= 3:
+                for d in random.sample(pool_distracteurs, 3):
+                    options.add(f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}")
+    
+    # --- SCÉNARIO 2 : JEU SUR UNE GRANDE CATÉGORIE ---
+    else:
+        if request.difficulty == "facile": # Demande le livre
+            reponse_correcte = verset_correct.get("book_name")
+            options.add(reponse_correcte)
+            # 2 distracteurs du même groupe, 1 hors groupe
+            pool_pertinent = {v.get("book_name") for v in pool_source if v.get("book_name") != reponse_correcte}
+            pool_general = {v.get("book_name") for v in versets if v.get("book_name", "").lower() not in source_book_names}
+            if len(pool_pertinent) >= 2: options.update(random.sample(list(pool_pertinent), 2))
+            if len(options) < 4 and pool_general: options.add(random.choice(list(pool_general)))
+
+        elif request.difficulty == "moyen": # Demande le chapitre
+            reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
+            options.add(reponse_correcte)
+            # Les distracteurs viennent tous du même groupe
+            pool_distracteurs = [v for v in pool_source if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte]
+            while len(options) < 4 and pool_distracteurs:
+                d = random.choice(pool_distracteurs)
+                options.add(f"{d.get('book_name')} {d.get('chapter')}")
+                pool_distracteurs.remove(d)
+
+        else: # Difficile, demande la référence exacte
+            reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
+            options.add(reponse_correcte)
+            # Les distracteurs viennent tous du même groupe, si possible même livre/chapitre
+            pool_distracteurs_chapitre = [v for v in pool_source if v.get("chapter") == verset_correct.get("chapter") and v != verset_correct]
+            pool_distracteurs_livre = [v for v in pool_source if v.get("book_name") == verset_correct.get("book_name") and v != verset_correct]
+            
+            distracteurs = set()
+            if len(pool_distracteurs_chapitre) >= 3: distracteurs.update(random.sample(pool_distracteurs_chapitre, 3))
+            elif len(pool_distracteurs_livre) >= 3: distracteurs.update(random.sample(pool_distracteurs_livre, 3))
+            else: distracteurs.update(random.sample([v for v in pool_source if v != verset_correct], 3))
+            for d in distracteurs:
+                options.add(f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}")
+
+    # --- Assemblage final ---
+    options_list = list(options)
+    while len(options_list) < 4: # Fallback pour s'assurer qu'il y a toujours 4 options
+        d = random.choice(versets)
+        options_list.append(f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}")
+
+    random.shuffle(options_list)
 
     return {
         "question_text": texte_de_la_question,
-        "options": options_references,
-        "reponse_correcte": reponse_correcte_ref,
+        "options": options_list,
+        "reponse_correcte": reponse_correcte
     }
 
 # N'oubliez pas d'inclure vos autres routes (/jeu, /verifier) ici si elles ne sont pas déjà dans le fichier.
