@@ -119,58 +119,7 @@ def get_bible_data():
             versets = []
     return versets
 
-# @app.post("/generer-question-reference")
-# def generate_reference_question(request: ReferenceQuestionRequest):
-#     pool = versets
-#     if request.source_group and request.source_group in BOOK_GROUPS:
-#         target_books = [book.lower() for book in BOOK_GROUPS[request.source_group]]
-#         pool = [v for v in versets if v.get("book_name", "").lower() in target_books]
 
-#     if not pool:
-#         raise HTTPException(status_code=400, detail="Le pool de versets est vide.")
-
-#     question_type = random.choice(["reference_exacte", "chapitre_seulement", "categorie_livre"])
-    
-#     verset_correct = random.choice(pool)
-#     texte_de_la_question = verset_correct.get("text", "")
-    
-#     options = set()
-#     reponse_correcte = ""
-
-#     if question_type == "reference_exacte":
-#         reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
-#         options.add(reponse_correcte)
-#         while len(options) < 4:
-#             distracteur = random.choice(versets)
-#             options.add(f"{distracteur.get('book_name')} {distracteur.get('chapter')}:{distracteur.get('verse')}")
-
-#     elif question_type == "chapitre_seulement":
-#         reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
-#         options.add(reponse_correcte)
-#         while len(options) < 4:
-#             distracteur = random.choice(versets)
-#             options.add(f"{distracteur.get('book_name')} {distracteur.get('chapter')}")
-
-#     elif question_type == "categorie_livre":
-#         reponse_correcte = find_book_category(verset_correct.get('book_name'))
-#         if not reponse_correcte:
-#             return generate_reference_question(request) # Relance si le livre n'a pas de catégorie
-        
-#         options.add(reponse_correcte)
-#         categories_pool = [cat.replace("_", " ").capitalize() for cat in BOOK_GROUPS.keys()]
-#         while len(options) < 4:
-#             options.add(random.choice(categories_pool))
-
-#     options_list = list(options)
-#     random.shuffle(options_list)
-
-#     return {
-#         "question_text": texte_de_la_question,
-#         "options": options_list,
-#         "reponse_correcte": reponse_correcte
-#     }
-
-# --- Fonctions de comparaison flexible (NOUVEAU) ---
 
 def normalize_text(s: str) -> str:
     """Met en minuscule, retire les accents et la ponctuation."""
@@ -344,11 +293,7 @@ def verifier_reponses(data: VerificationRequest):
     return {"resultats": resultats}
 
 
-# =======================================================================
-# CODE À AJOUTER POUR LE NOUVEAU JEU QCM
-# =======================================================================
 
-# Fichier: main.py (côté API)
 import re
 
 # ... (votre code existant, y compris le chargement de bible_data)
@@ -809,17 +754,68 @@ def generate_reference_question(request: ReferenceQuestionRequest):
         print(f"Erreur interne inattendue dans /qcm/random: {e}")
         return {"error": f"Une erreur interne est survenue. Détail: {e}"}
 
-# ✅ NOUVELLE ROUTE POUR LE JEU "REMETTRE EN ORDRE"
-# CODE CÔTÉ BACKEND (Python) - CORRIGÉ
-# Fichier: main.py
+
 
 # Assurez-vous que ce modèle est défini avec vos autres modèles Pydantic
 class RemettreEnOrdreRequest(BaseModel):
     reference: str
 
+
+from fastapi import Body
+
+class BatchQcmRequest(BaseModel):
+    reference: str
+    niveau: str
+    nombre: int
+    mots_deja_utilises: Optional[List[str]] = None
+
+@app.post("/qcm/batch")
+def generer_qcm_batch(data: BatchQcmRequest):
+    """
+    Génère un lot de questions QCM d'un coup,
+    pour stocker directement dans Firestore (mode Duel).
+    """
+    questions = []
+    mots_deja = set(data.mots_deja_utilises or [])
+
+    for _ in range(data.nombre):
+        try:
+            # On réutilise la logique de /qcm
+            ref_data = ReferenceRequest(
+                reference=data.reference,
+                niveau=data.niveau,
+                mots_deja_utilises=list(mots_deja)
+            )
+            question = jeu_qcm(ref_data)  # 🔥 réutilise la fonction existante
+
+            if "error" in question:
+                continue
+
+            # On garde en mémoire le mot utilisé pour éviter les doublons
+            mots_deja.add(question["reponse_correcte"].lower())
+
+            # On ajoute à la liste
+            questions.append({
+                "question": question["question"],
+                "options": question["options"],
+                "answer": question["reponse_correcte"],
+                "reference": question["reference"],
+            })
+        except Exception as e:
+            print(f"Erreur génération batch: {e}")
+
+    if not questions:
+        raise HTTPException(status_code=500, detail="Impossible de générer les questions.")
+
+    return {"questions": questions}
+
+
+
+
 # ✅ CORRECTION : On utilise @app.post pour accepter les données de l'application
 @app.post("/remettre-en-ordre")
 def get_unscrambled_verse_game(data: RemettreEnOrdreRequest):
+
     """
     Prépare les données pour le jeu "Remettre le Verset en Ordre", 
     en gérant les versets uniques et les plages.
