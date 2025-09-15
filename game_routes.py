@@ -688,12 +688,12 @@ def get_unscrambled_verse_game(data: RemettreEnOrdreRequest):
         
         ref_exacte = f"{verset_choisi.get('book_name')} {verset_choisi.get('chapter')}:{verset_choisi.get('verse')}"
 
-        return {
-            "mots_melanges": mots_melanges,
-            "ordre_correct": mots,
-            "texte_original": texte_original,
-            "reference": ref_exacte
-        }
-
+        jeu_data = {
+    "mots_melanges": mots_melanges,
+    "ordre_correct": mots,
+    "texte_original": texte_original,
+    "reference": ref_exacte
+}
+        return {"versets": [jeu_data]}
     except Exception as e:
         return {"error": f"Une erreur interne est survenue: {e}"}
