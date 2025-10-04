@@ -4,6 +4,11 @@ from duel_routes import router as duel_router # type: ignore
 
 app = FastAPI()
 
+# Endpoint de santé pour UptimeRobot
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 # Inclure les routes
 app.include_router(game_router)
 app.include_router(duel_router)
