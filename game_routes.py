@@ -345,6 +345,64 @@ def verifier_reponses(data: VerificationRequest):
 @router.get("/passage")
 def get_passage(ref: str = Query(..., description="Reference like 'Jean 3:16' or 'Psaumes 23:1-4'")):
     try:
+        # 1. Essayer d'abord une plage de versets (Jean 3:16-17)
+        match_plage = re.match(r"^(.*\D)\s*(\d+):(\d+)-(\d+)$", ref.strip())
+        
+        if match_plage:
+            book_name, chapter_str, start_verse_str, end_verse_str = match_plage.groups()
+            book_name = book_name.strip()
+            chapitre = int(chapter_str)
+            numeros_versets = list(range(int(start_verse_str), int(end_verse_str) + 1))
+
+            versets_selectionnes = [
+                v for v in versets if
+                v.get("book_name", "").strip().lower() == book_name.lower() and
+                int(v.get("chapter")) == chapitre and
+                int(v.get("verse")) in numeros_versets
+            ]
+
+            if not versets_selectionnes:
+                return []  # ✅ Retourne liste vide si rien trouvé
+
+            versets_selectionnes.sort(key=lambda v: int(v['verse']))
+            
+            return [
+                {"reference": f"{v['book_name']} {v['chapter']}:{v['verse']}", "text": v['text']}
+                for v in versets_selectionnes
+            ]
+        
+        # 2. Sinon, essayer un verset unique (Jean 3:16)
+        match_unique = re.match(r"^(.*\D)\s*(\d+):(\d+)$", ref.strip())
+        
+        if match_unique:
+            book_name, chapter_str, verse_str = match_unique.groups()
+            book_name = book_name.strip()
+            chapitre = int(chapter_str)
+            verse_num = int(verse_str)
+            
+            # ✅ Chercher le verset unique
+            verset_trouve = next((
+                v for v in versets if
+                v.get("book_name", "").strip().lower() == book_name.lower() and
+                int(v.get("chapter")) == chapitre and
+                int(v.get("verse")) == verse_num
+            ), None)
+            
+            if verset_trouve:
+                return [{
+                    "reference": f"{verset_trouve['book_name']} {verset_trouve['chapter']}:{verset_trouve['verse']}",
+                    "text": verset_trouve.get("text", "Text not found.")
+                }]
+            else:
+                return []  # ✅ Retourne liste vide si pas trouvé
+        
+        # 3. Si aucun format ne match
+        return []  # ✅ Retourne liste vide au lieu d'une exception
+
+    except Exception as e:
+        print(f"Error in /passage: {e}")
+        return []  # ✅ Retourne liste vide en cas d'erreur
+    try:
         # Check for a passage first (e.g., "Book C:V-V")
         match = re.match(r"^(.*\D)\s*(\d+):(\d+)-(\d+)$", ref.strip())
         
