@@ -16,6 +16,7 @@ class BibleLoader:
         """Charge uniquement les fichiers JSON locaux disponibles."""
         versions = {
             "fr": "segond_1910.json",
+            "en": "KJV.json",  # ← AJOUTÉ : Chargement du KJV local
         }
         
         for lang, filename in versions.items():
@@ -35,19 +36,20 @@ class BibleLoader:
                 print(f"❌ Le fichier {filename} est mal formaté.")
                 self.bibles[lang] = []
         
+        # ← COMMENTÉ : Plus besoin de l'API externe maintenant
         # Marquer l'anglais comme disponible via API
-        self.bibles["en"] = "API"
-        print("✅ Anglais (KJV) disponible via bible-api.com")
+        # self.bibles["en"] = "API"
+        # print("✅ Anglais (KJV) disponible via bible-api.com")
     
     def get_verses(self, language: str = "fr") -> List[Dict[str, Any]]:
         """
         Retourne les versets pour la langue spécifiée.
-        Pour l'anglais, retourne une liste vide (utilisation de l'API à la demande).
+        Pour l'anglais, retourne maintenant les versets du JSON local.
         """
         verses = self.bibles.get(language, self.bibles.get("fr", []))
         
         if verses == "API":
-            return []  # Les versets anglais seront récupérés via l'API
+            return []  # Les versets anglais seront récupérés via l'API (ancien système)
         
         return verses
     
@@ -152,18 +154,19 @@ class BibleLoader:
     def get_verses_for_reference(self, reference: str, language: str = "fr") -> List[Dict]:
         """
         Récupère les versets pour une référence donnée.
-        Utilise l'API pour l'anglais, le JSON local pour le français.
+        ← MODIFIÉ : Maintenant utilise le JSON local pour l'anglais aussi
         """
         if language == "fr":
-            return self._get_from_local_json(reference)
+            return self._get_from_local_json(reference, "fr")
         elif language == "en":
-            return self._get_from_api(reference)
+            # ← CHANGÉ : Utilise JSON local au lieu de l'API
+            return self._get_from_local_json(reference, "en")
         
         return []
     
-    def _get_from_local_json(self, reference: str) -> List[Dict]:
-        """Récupère depuis le JSON local (français)."""
-        verses = self.get_verses("fr")
+    def _get_from_local_json(self, reference: str, language: str = "fr") -> List[Dict]:
+        """Récupère depuis le JSON local (français OU anglais)."""
+        verses = self.get_verses(language)
         
         try:
             match_plage = re.match(r"^(.*\D)\s*(\d+):(\d+)-(\d+)$", reference.strip())
@@ -214,7 +217,7 @@ class BibleLoader:
         return []
     
     def _get_from_api(self, reference: str) -> List[Dict]:
-        """Récupère depuis l'API (anglais)."""
+        """Récupère depuis l'API (anglais) - ANCIEN SYSTÈME, conservé pour backup."""
         try:
             match_plage = re.match(r"^(.*\D)\s*(\d+):(\d+)-(\d+)$", reference.strip())
             

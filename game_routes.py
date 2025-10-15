@@ -22,65 +22,16 @@ router = APIRouter()
 # 🆕 FONCTION HELPER POUR RÉCUPÉRER LES VERSETS
 # ============================================
 def parse_and_fetch_verses(reference: str, request: Request) -> list:
-    """Parse une référence et récupère les versets (API ou JSON local)."""
+    """Parse une référence et récupère les versets (JSON local multilingue)."""
     language = getattr(request.state, "language", "fr")
     
-    # Si anglais (mode API)
-    if language == "en" and bible_loader.is_api_mode("en"):
-        verses = bible_loader.get_verses_for_reference(reference, "en")
-        if not verses:
-            raise HTTPException(404, "Verses not found via API")
-        return verses
+    # Utiliser bible_loader qui gère maintenant FR et EN en local
+    verses = bible_loader.get_verses_for_reference(reference, language)
     
-    # Si français (JSON local)
-    verses = bible_loader.get_verses("fr")
+    if not verses:
+        raise HTTPException(404, f"Verses not found for reference: {reference}")
     
-    # Parser la référence
-    try:
-        # Plage de versets (ex: Jean 3:16-18)
-        match_plage = re.match(r"^(.*\D)\s*(\d+):(\d+)-(\d+)$", reference.strip())
-        if match_plage:
-            book, chapter, start_v, end_v = match_plage.groups()
-            book = book.strip()
-            chapter = int(chapter)
-            verse_nums = list(range(int(start_v), int(end_v) + 1))
-            
-            return [
-                v for v in verses
-                if v.get("book_name", "").strip().lower() == book.lower()
-                and int(v.get("chapter")) == chapter
-                and int(v.get("verse")) in verse_nums
-            ]
-        
-        # Verset unique (ex: Jean 3:16)
-        match_unique = re.match(r"^(.*\D)\s*(\d+):(\d+)$", reference.strip())
-        if match_unique:
-            book, chapter, verse = match_unique.groups()
-            book = book.strip()
-            
-            return [
-                v for v in verses
-                if v.get("book_name", "").strip().lower() == book.lower()
-                and int(v.get("chapter")) == int(chapter)
-                and int(v.get("verse")) == int(verse)
-            ]
-        
-        # Chapitre complet (ex: Jean 3)
-        match_chapitre = re.match(r"^(.*\D)\s*(\d+)$", reference.strip())
-        if match_chapitre:
-            book, chapter = match_chapitre.groups()
-            
-            return [
-                v for v in verses
-                if v.get("book_name", "").strip().lower() == book.strip().lower()
-                and int(v.get("chapter")) == int(chapter)
-            ]
-        
-    except Exception as e:
-        print(f"Erreur parsing: {e}")
-        raise HTTPException(400, f"Invalid reference: {reference}")
-    
-    return []
+    return verses
 
 # --- Modèles de données ---
 class ReferenceRequest(BaseModel):
@@ -113,35 +64,117 @@ class RemettreEnOrdreRequest(BaseModel):
     reference: str
 
 # Dictionnaire des catégories de livres
+# Dictionnaire des catégories de livres - VERSION BILINGUE
 BOOK_GROUPS = {
-    "ancien_testament": [
-        "Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome", "Josué", "Juges", "Ruth", "1 Samuel", "2 Samuel", "1 Rois", "2 Rois",
-        "1 Chroniques", "2 Chroniques", "Esdras", "Néhémie", "Esther", "Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques", "Ésaïe",
-        "Jérémie", "Lamentations", "Ézéchiel", "Daniel", "Osée", "Joël", "Amos", "Abdias", "Jonas", "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée",
-        "Zacharie", "Malachie"
-    ],
-    "nouveau_testament": [
-        "Matthieu", "Marc", "Luc", "Jean", "Actes", "Romains", "1 Corinthiens", "2 Corinthiens", "Galates", "Éphésiens", "Philippiens", "Colossiens",
-        "1 Thessaloniciens", "2 Thessaloniciens", "1 Timothée", "2 Timothée", "Tite", "Philémon", "Hébreux", "Jacques", "1 Pierre", "2 Pierre",
-        "1 Jean", "2 Jean", "3 Jean", "Jude", "Apocalypse"
-    ],
-    "pentateuque": ["Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome"],
-    "historiques": ["Josué", "Juges", "Ruth", "1 Samuel", "2 Samuel", "1 Rois", "2 Rois", "1 Chroniques", "2 Chroniques", "Esdras", "Néhémie", "Esther"],
-    "poetiques": ["Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques"],
-    "prophetes_majeurs": ["Ésaïe", "Jérémie", "Lamentations", "Ézéchiel", "Daniel"],
-    "prophetes_mineurs": ["Osée", "Joël", "Amos", "Abdias", "Jonas", "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée", "Zacharie", "Malachie"],
-    "evangiles": ["Matthieu", "Marc", "Luc", "Jean"],
-    "histoire_nt": ["Actes"],
-    "epitres_paul": ["Romains", "1 Corinthiens", "2 Corinthiens", "Galates", "Éphésiens", "Philippiens", "Colossiens", "1 Thessaloniciens", "2 Thessaloniciens", "1 Timothée", "2 Timothée", "Tite", "Philémon"],
-    "epitres_generales": ["Hébreux", "Jacques", "1 Pierre", "2 Pierre", "1 Jean", "2 Jean", "3 Jean", "Jude"],
-    "apocalypse": ["Apocalypse"],
+    "ancien_testament": {
+        "fr": [
+            "Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome", "Josué", "Juges", "Ruth", 
+            "1 Samuel", "2 Samuel", "1 Rois", "2 Rois", "1 Chroniques", "2 Chroniques", "Esdras", 
+            "Néhémie", "Esther", "Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques", 
+            "Ésaïe", "Jérémie", "Lamentations", "Ézéchiel", "Daniel", "Osée", "Joël", "Amos", "Abdias", 
+            "Jonas", "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée", "Zacharie", "Malachie"
+        ],
+        "en": [
+            "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy", "Joshua", "Judges", "Ruth",
+            "1 Samuel", "2 Samuel", "1 Kings", "2 Kings", "1 Chronicles", "2 Chronicles", "Ezra",
+            "Nehemiah", "Esther", "Job", "Psalms", "Proverbs", "Ecclesiastes", "Song of Solomon",
+            "Isaiah", "Jeremiah", "Lamentations", "Ezekiel", "Daniel", "Hosea", "Joel", "Amos", "Obadiah",
+            "Jonah", "Micah", "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah", "Malachi"
+        ]
+    },
+    "nouveau_testament": {
+        "fr": [
+            "Matthieu", "Marc", "Luc", "Jean", "Actes", "Romains", "1 Corinthiens", "2 Corinthiens", 
+            "Galates", "Éphésiens", "Philippiens", "Colossiens", "1 Thessaloniciens", "2 Thessaloniciens", 
+            "1 Timothée", "2 Timothée", "Tite", "Philémon", "Hébreux", "Jacques", "1 Pierre", "2 Pierre", 
+            "1 Jean", "2 Jean", "3 Jean", "Jude", "Apocalypse"
+        ],
+        "en": [
+            "Matthew", "Mark", "Luke", "John", "Acts", "Romans", "1 Corinthians", "2 Corinthians",
+            "Galatians", "Ephesians", "Philippians", "Colossians", "1 Thessalonians", "2 Thessalonians",
+            "1 Timothy", "2 Timothy", "Titus", "Philemon", "Hebrews", "James", "1 Peter", "2 Peter",
+            "1 John", "2 John", "3 John", "Jude", "Revelation"
+        ]
+    },
+    "pentateuque": {
+        "fr": ["Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome"],
+        "en": ["Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy"]
+    },
+    "historiques": {
+        "fr": ["Josué", "Juges", "Ruth", "1 Samuel", "2 Samuel", "1 Rois", "2 Rois", "1 Chroniques", 
+               "2 Chroniques", "Esdras", "Néhémie", "Esther"],
+        "en": ["Joshua", "Judges", "Ruth", "1 Samuel", "2 Samuel", "1 Kings", "2 Kings", "1 Chronicles",
+               "2 Chronicles", "Ezra", "Nehemiah", "Esther"]
+    },
+    "poetiques": {
+        "fr": ["Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques"],
+        "en": ["Job", "Psalms", "Proverbs", "Ecclesiastes", "Song of Solomon"]
+    },
+    "prophetes_majeurs": {
+        "fr": ["Ésaïe", "Jérémie", "Lamentations", "Ézéchiel", "Daniel"],
+        "en": ["Isaiah", "Jeremiah", "Lamentations", "Ezekiel", "Daniel"]
+    },
+    "prophetes_mineurs": {
+        "fr": ["Osée", "Joël", "Amos", "Abdias", "Jonas", "Michée", "Nahum", "Habacuc", "Sophonie", 
+               "Aggée", "Zacharie", "Malachie"],
+        "en": ["Hosea", "Joel", "Amos", "Obadiah", "Jonah", "Micah", "Nahum", "Habakkuk", "Zephaniah",
+               "Haggai", "Zechariah", "Malachi"]
+    },
+    "evangiles": {
+        "fr": ["Matthieu", "Marc", "Luc", "Jean"],
+        "en": ["Matthew", "Mark", "Luke", "John"]
+    },
+    "histoire_nt": {
+        "fr": ["Actes"],
+        "en": ["Acts"]
+    },
+    "epitres_paul": {
+        "fr": ["Romains", "1 Corinthiens", "2 Corinthiens", "Galates", "Éphésiens", "Philippiens", 
+               "Colossiens", "1 Thessaloniciens", "2 Thessaloniciens", "1 Timothée", "2 Timothée", 
+               "Tite", "Philémon"],
+        "en": ["Romans", "1 Corinthians", "2 Corinthians", "Galatians", "Ephesians", "Philippians",
+               "Colossians", "1 Thessalonians", "2 Thessalonians", "1 Timothy", "2 Timothy", "Titus", "Philemon"]
+    },
+    "epitres_generales": {
+        "fr": ["Hébreux", "Jacques", "1 Pierre", "2 Pierre", "1 Jean", "2 Jean", "3 Jean", "Jude"],
+        "en": ["Hebrews", "James", "1 Peter", "2 Peter", "1 John", "2 John", "3 John", "Jude"]
+    },
+    "apocalypse": {
+        "fr": ["Apocalypse"],
+        "en": ["Revelation"]
+    }
 }
 
-def find_book_category(book_name: str) -> Optional[str]:
-    for category, books in BOOK_GROUPS.items():
+# Fonction helper mise à jour
+def find_book_category(book_name: str, language: str = "fr") -> Optional[str]:
+    """Trouve la catégorie d'un livre selon la langue."""
+    for category, books_dict in BOOK_GROUPS.items():
+        if isinstance(books_dict, dict):
+            books = books_dict.get(language, books_dict.get("fr", []))
+        else:
+            # Rétrocompatibilité si l'ancien format est utilisé
+            books = books_dict
+        
         if book_name in books:
             return category.replace("_", " ").capitalize()
     return None
+
+def get_books_for_category(category: str, language: str = "fr") -> List[str]:
+    """Retourne la liste des livres d'une catégorie dans la langue spécifiée."""
+    books_dict = BOOK_GROUPS.get(category, {})
+    
+    if isinstance(books_dict, dict):
+        return books_dict.get(language, books_dict.get("fr", []))
+    else:
+        # Rétrocompatibilité
+        return books_dict
+
+# Exemple d'utilisation
+# books_fr = get_books_for_category("evangiles", "fr")
+# # ["Matthieu", "Marc", "Luc", "Jean"]
+# 
+# books_en = get_books_for_category("evangiles", "en")
+# # ["Matthew", "Mark", "Luke", "John"]
 
 def normalize_text(s: str) -> str:
     """Met en minuscule, retire les accents et la ponctuation."""
@@ -427,12 +460,12 @@ def get_single_verse(ref: str = Query(...), request: Request = None):
 def generate_reference_question(request_data: ReferenceQuestionRequest, request: Request):
     """Génère une question de référence avec support multilingue."""
     language = getattr(request.state, "language", "fr")
+    versets = bible_loader.get_verses(language) if language == "fr" else []
     
-    # Pour l'instant, cette route fonctionne uniquement en français
-    if language == "en":
-        return {"error": "Cette fonctionnalité n'est disponible qu'en français pour le moment."}
+    # Si anglais et pas de versets locaux, cette fonctionnalité n'est pas disponible
+    if language == "en" and not versets:
+        return {"error": "This feature is only available in French for now."}
     
-    versets = bible_loader.get_verses("fr")
     pool_source = versets
     is_specific_book = request_data.source_book is not None
     source_book_names = set()
@@ -440,7 +473,9 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
     if is_specific_book:
         pool_source = [v for v in versets if v.get("book_name", "").lower() == request_data.source_book.lower()]
     elif request_data.source_group:
-        source_book_names = {book.lower() for book in BOOK_GROUPS.get(request_data.source_group, [])}
+        # Utiliser la langue appropriée
+        source_books = get_books_for_category(request_data.source_group, language)
+        source_book_names = {book.lower() for book in source_books}
         pool_source = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
 
     if not pool_source:

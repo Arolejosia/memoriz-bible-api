@@ -8,57 +8,18 @@ from bible_loader import bible_loader
 
 router = APIRouter()
 
-# --- Fonction helper ---
+# --- Fonction helper SIMPLIFIÉE ---
 def parse_and_fetch_verses(reference: str, request: Request) -> List[dict]:
-    """Parse une référence et récupère les versets (API ou JSON local)."""
+    """Parse une référence et récupère les versets (JSON local multilingue)."""
     language = getattr(request.state, "language", "fr")
     
-    if language == "en" and bible_loader.is_api_mode("en"):
-        verses = bible_loader.get_verses_for_reference(reference, "en")
-        if not verses:
-            raise HTTPException(404, "Verses not found via API")
-        return verses
+    # ✅ SIMPLIFIÉ : bible_loader gère maintenant FR et EN en local
+    verses = bible_loader.get_verses_for_reference(reference, language)
     
-    verses = bible_loader.get_verses("fr")
+    if not verses:
+        raise HTTPException(404, f"Verses not found for reference: {reference}")
     
-    try:
-        match_plage = re.match(r"^(.*\D)\s*(\d+):(\d+)-(\d+)$", reference.strip())
-        if match_plage:
-            book, chapter, start_v, end_v = match_plage.groups()
-            book = book.strip()
-            chapter = int(chapter)
-            verse_nums = list(range(int(start_v), int(end_v) + 1))
-            
-            return [
-                v for v in verses
-                if v.get("book_name", "").strip().lower() == book.lower()
-                and int(v.get("chapter")) == chapter
-                and int(v.get("verse")) in verse_nums
-            ]
-        
-        match_unique = re.match(r"^(.*\D)\s*(\d+):(\d+)$", reference.strip())
-        if match_unique:
-            book, chapter, verse = match_unique.groups()
-            return [
-                v for v in verses
-                if v.get("book_name", "").strip().lower() == book.strip().lower()
-                and int(v.get("chapter")) == int(chapter)
-                and int(v.get("verse")) == int(verse)
-            ]
-        
-        match_chapitre = re.match(r"^(.*\D)\s*(\d+)$", reference.strip())
-        if match_chapitre:
-            book, chapter = match_chapitre.groups()
-            return [
-                v for v in verses
-                if v.get("book_name", "").strip().lower() == book.strip().lower()
-                and int(v.get("chapter")) == int(chapter)
-            ]
-    except Exception as e:
-        print(f"Erreur parsing: {e}")
-        raise HTTPException(400, f"Invalid reference: {reference}")
-    
-    return []
+    return verses
 
 def normalize_text(s: str) -> str:
     s = s.lower().strip()
@@ -108,43 +69,33 @@ def jeu_qcm_single(data: ReferenceRequest, request: Request):
         mot_correct = random.choice(mots_non_utilises)
         mot_a_retirer = next((mot for mot in mots if normalize_text(mot) == mot_correct), mot_correct)
         
-        # Pour les distracteurs avec l'API, on doit être plus créatifs
+        # ✅ SIMPLIFIÉ : Génération des distracteurs pour FR et EN
         mauvais_mots = set()
         language = getattr(request.state, "language", "fr")
         
-        if language == "en" and bible_loader.is_api_mode("en"):
-            # Mode API : utiliser des mots du même verset ou des mots bibliques communs
-            mots_disponibles = {normalize_text(m) for m in mots if len(m) > 3}
-            mots_disponibles.discard(mot_correct.lower())
-            
-            if len(mots_disponibles) >= 3:
-                mauvais_mots = set(random.sample(list(mots_disponibles), 3))
-            else:
-                # Fallback avec des mots bibliques anglais courants
-                fallback_words = ["love", "faith", "hope", "grace", "peace", "truth", "light", "life", "lord", "god"]
-                mauvais_mots = set(random.sample(fallback_words, min(3, len(fallback_words))))
-        else:
-            # Mode JSON local (français) - logique existante
-            pool_autres = bible_loader.get_verses("fr")
-            
-            if data.niveau.lower() == "facile":
-                pool = [v for v in pool_autres if v.get("book_name") != verset_question.get("book_name")]
-            elif data.niveau.lower() == "difficile":
-                pool = [v for v in pool_autres if v.get("book_name") == verset_question.get("book_name") 
-                                             and v.get("chapter") == verset_question.get("chapter")]
-            else:
-                pool = [v for v in pool_autres if v.get("book_name") == verset_question.get("book_name")]
-            
-            random.shuffle(pool)
-            while len(mauvais_mots) < 3 and pool:
-                mots_option = pool.pop()['text'].split()
-                mots_propres = {normalize_text(m) for m in mots_option if len(m) > 3}
-                mots_propres.discard(mot_correct.lower())
-                if mots_propres:
-                    mauvais_mots.add(random.choice(list(mots_propres)))
+        # Récupérer tous les versets de la langue actuelle
+        pool_autres = bible_loader.get_verses(language)
         
+        if data.niveau.lower() == "facile":
+            pool = [v for v in pool_autres if v.get("book_name") != verset_question.get("book_name")]
+        elif data.niveau.lower() == "difficile":
+            pool = [v for v in pool_autres if v.get("book_name") == verset_question.get("book_name") 
+                                         and v.get("chapter") == verset_question.get("chapter")]
+        else:
+            pool = [v for v in pool_autres if v.get("book_name") == verset_question.get("book_name")]
+        
+        random.shuffle(pool)
+        while len(mauvais_mots) < 3 and pool:
+            mots_option = pool.pop()['text'].split()
+            mots_propres = {normalize_text(m) for m in mots_option if len(m) > 3}
+            mots_propres.discard(mot_correct.lower())
+            if mots_propres:
+                mauvais_mots.add(random.choice(list(mots_propres)))
+        
+        # Fallback si pas assez de distracteurs
         while len(mauvais_mots) < 3:
-            mauvais_mots.add(random.choice(["love", "peace", "faith"] if language == "en" else ["amour", "paix", "joie"]))
+            fallback = ["love", "peace", "faith", "hope"] if language == "en" else ["amour", "paix", "joie", "foi"]
+            mauvais_mots.add(random.choice(fallback))
         
         question = verset_question["text"].replace(mot_a_retirer, "_____", 1)
         options = list(mauvais_mots) + [mot_correct]
