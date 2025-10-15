@@ -46,7 +46,7 @@ typing_extensions==4.14.0
 urllib3==2.4.0
 uvicorn==0.34.3
 yarl==1.20.1
-vfastapi==0.104.1
+fastapi==0.104.1
 uvicorn==0.24.0
 requests==2.31.0
 python-dotenv==1.0.0
