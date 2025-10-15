@@ -112,12 +112,35 @@ def jeu_qcm_single(data: ReferenceRequest, request: Request):
         return {"error": f"Erreur: {e}"}
 
 # --- Routes ---
+# Ajoutez ces validations au début de votre fonction generer_qcm_batch dans duel_routes.py
+
 @router.post("/qcm/batch")
 def generer_qcm_batch(data: BatchQcmRequest, request: Request):
     """Génère un batch de QCM avec support multilingue."""
+    
+    # ✅ AJOUT 1 : Validation du nombre
+    if data.nombre <= 0:
+        raise HTTPException(
+            status_code=400, 
+            detail="Le nombre doit être supérieur à 0"
+        )
+    
+    # ✅ AJOUT 2 : Limiter le nombre maximum
+    if data.nombre > 20:
+        raise HTTPException(
+            status_code=400, 
+            detail="Le nombre maximum est 20"
+        )
+    
     questions, mots_deja = [], set(data.mots_deja_utilises or [])
     
-    for _ in range(data.nombre):
+    # ✅ AJOUT 3 : Gestion si pas assez de mots disponibles
+    tentatives_max = data.nombre * 3  # 3 tentatives par question demandée
+    tentatives = 0
+    
+    while len(questions) < data.nombre and tentatives < tentatives_max:
+        tentatives += 1
+        
         q = jeu_qcm_single(
             ReferenceRequest(
                 reference=data.reference,
@@ -138,9 +161,14 @@ def generer_qcm_batch(data: BatchQcmRequest, request: Request):
             "reference": q["reference"]
         })
     
+    # ✅ AJOUT 4 : Message si pas assez de questions générées
     if not questions:
-        raise HTTPException(500, "Impossible de générer les questions.")
+        raise HTTPException(
+            status_code=500, 
+            detail="Impossible de générer des questions pour cette référence."
+        )
     
+    # ✅ MODIFICATION : Ne pas lever d'erreur si moins de questions, juste retourner ce qui est disponible
     return {"questions": questions}
 
 @router.post("/duel/texte-a-trous/batch")

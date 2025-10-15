@@ -16,7 +16,7 @@ class BibleLoader:
         """Charge uniquement les fichiers JSON locaux disponibles."""
         versions = {
             "fr": "segond_1910.json",
-            "en": "KJV.json",  # ← AJOUTÉ : Chargement du KJV local
+            "en": "kjv.json",  # ← AJOUTÉ : Chargement du KJV local
         }
         
         for lang, filename in versions.items():
