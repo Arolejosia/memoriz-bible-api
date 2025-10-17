@@ -363,8 +363,12 @@ def get_passage(ref: str = Query(...), request: Request = None):
 
 @router.post("/qcm")
 def jeu_qcm(data: ReferenceRequest, request: Request):
-    """Génère une question QCM avec support multilingue."""
+    """Génère une question QCM avec support multilingue complet."""
     try:
+        language = getattr(request.state, "language", "fr")
+        print(f"🎮 /qcm appelé avec language={language}, reference={data.reference}")
+        
+        # ✅ Récupérer les versets dans la langue demandée
         versets_selectionnes = parse_and_fetch_verses(data.reference, request)
         
         if not versets_selectionnes:
@@ -383,38 +387,46 @@ def jeu_qcm(data: ReferenceRequest, request: Request):
             mots_non_utilises = list(mots_eligibles)
         
         if not mots_non_utilises:
-            return {"error": "Félicitations ! Vous avez mémorisé tous les mots de ce passage."}
+            message = {
+                "fr": "Félicitations ! Vous avez mémorisé tous les mots de ce passage.",
+                "en": "Congratulations! You have memorized all the words in this passage."
+            }
+            return {"error": message.get(language, message["fr"])}
 
         mot_correct = random.choice(mots_non_utilises)
         mot_a_retirer = next((mot for mot in mots if normalize_text(mot) == mot_correct), mot_correct)
 
-        # Générer distracteurs
+        # ✅ NOUVEAU : Générer distracteurs selon la langue
         mauvais_mots = set()
-        language = getattr(request.state, "language", "fr")
         
-        if language == "en" and bible_loader.is_api_mode("en"):
-            # Mode API : utiliser mots du même verset ou fallback
-            mots_disponibles = {normalize_text(m) for m in mots if len(m) > 3}
-            mots_disponibles.discard(mot_correct.lower())
-            
-            if len(mots_disponibles) >= 3:
-                mauvais_mots = set(random.sample(list(mots_disponibles), 3))
-            else:
-                fallback = ["love", "faith", "hope", "grace", "peace", "truth", "light", "life"]
-                mauvais_mots = set(random.sample(fallback, min(3, len(fallback))))
+        # Récupérer TOUS les versets de la même langue
+        versets_all = bible_loader.get_verses(language)
+        
+        if not versets_all:
+            print(f"⚠️ Pas de versets disponibles pour {language}, utilisation de fallback")
+            # Fallback selon la langue
+            fallback_words = {
+                "en": ["love", "faith", "hope", "grace", "peace", "truth", "light", "life", "word", "spirit"],
+                "fr": ["amour", "foi", "espérance", "grâce", "paix", "vérité", "lumière", "vie", "parole", "esprit"]
+            }
+            mauvais_mots = set(random.sample(fallback_words.get(language, fallback_words["fr"]), 3))
         else:
-            # Mode JSON local
-            versets_all = bible_loader.get_verses("fr")
-            
+            # Générer des distracteurs intelligents selon le niveau
             if data.niveau == "facile":
+                # Facile : mots d'autres livres
                 pool = [v for v in versets_all if v.get("book_name") != verset_question.get("book_name")]
             elif data.niveau == "difficile":
-                pool = [v for v in versets_all if v.get("book_name") == verset_question.get("book_name") 
-                                                 and v.get("chapter") == verset_question.get("chapter")]
+                # Difficile : mots du même chapitre
+                pool = [v for v in versets_all 
+                       if v.get("book_name") == verset_question.get("book_name") 
+                       and v.get("chapter") == verset_question.get("chapter")]
             else:
+                # Moyen : mots du même livre
                 pool = [v for v in versets_all if v.get("book_name") == verset_question.get("book_name")]
 
             random.shuffle(pool)
+            
+            # Extraire des mots distracteurs
             while len(mauvais_mots) < 3 and pool:
                 mots_option = pool.pop()['text'].split()
                 mots_propres = {normalize_text(m) for m in mots_option if len(m) > 3}
@@ -422,15 +434,20 @@ def jeu_qcm(data: ReferenceRequest, request: Request):
                 if mots_propres:
                     mauvais_mots.add(random.choice(list(mots_propres)))
 
-        while len(mauvais_mots) < 3:
-            mauvais_mots.add(random.choice(["love", "peace", "faith"] if language == "en" else ["amour", "paix", "joie"]))
+            # Si pas assez de distracteurs, utiliser fallback
+            while len(mauvais_mots) < 3:
+                fallback = ["love", "peace", "faith"] if language == "en" else ["amour", "paix", "joie"]
+                mauvais_mots.add(random.choice(fallback))
 
+        # Créer la question avec le mot manquant
         question = verset_question["text"].replace(mot_a_retirer, "_____", 1)
         options = list(mauvais_mots) + [mot_correct]
         random.shuffle(options)
         
         verset_ref = f"{verset_question.get('book_name')} {verset_question.get('chapter')}:{verset_question.get('verse')}"
 
+        print(f"✅ Question générée en {language}: {len(options)} options")
+        
         return {
             "question": question,
             "options": options,
@@ -439,7 +456,11 @@ def jeu_qcm(data: ReferenceRequest, request: Request):
         }
 
     except Exception as e:
+        print(f"❌ Erreur dans /qcm: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": f"Une erreur interne est survenue: {e}"}
+  
 
 @router.get("/verser")
 def get_single_verse(ref: str = Query(...), request: Request = None):
@@ -458,85 +479,171 @@ def get_single_verse(ref: str = Query(...), request: Request = None):
 
 @router.post("/generer-question-reference")
 def generate_reference_question(request_data: ReferenceQuestionRequest, request: Request):
-    """Génère une question de référence avec support multilingue."""
+    """Génère une question de référence avec support multilingue complet."""
     language = getattr(request.state, "language", "fr")
-    versets = bible_loader.get_verses(language) if language == "fr" else []
+    print(f"🎯 /generer-question-reference appelé avec language={language}")
     
-    # Si anglais et pas de versets locaux, cette fonctionnalité n'est pas disponible
-    if language == "en" and not versets:
-        return {"error": "This feature is only available in French for now."}
+    # ✅ Charger les versets dans la langue demandée
+    versets = bible_loader.get_verses(language)
+    
+    if not versets:
+        error_msg = {
+            "fr": "Aucun verset disponible pour cette langue.",
+            "en": "No verses available for this language."
+        }
+        return {"error": error_msg.get(language, error_msg["fr"])}
     
     pool_source = versets
     is_specific_book = request_data.source_book is not None
     source_book_names = set()
 
+    # ✅ Filtrer selon le livre ou le groupe
     if is_specific_book:
-        pool_source = [v for v in versets if v.get("book_name", "").lower() == request_data.source_book.lower()]
+        # Normaliser le nom du livre pour la comparaison
+        source_book_lower = request_data.source_book.lower()
+        pool_source = [v for v in versets if v.get("book_name", "").lower() == source_book_lower]
+        
+        if not pool_source:
+            print(f"⚠️ Aucun verset trouvé pour le livre '{request_data.source_book}'")
+            error_msg = {
+                "fr": f"Aucun verset trouvé pour le livre '{request_data.source_book}'.",
+                "en": f"No verses found for the book '{request_data.source_book}'."
+            }
+            return {"error": error_msg.get(language, error_msg["fr"])}
+            
     elif request_data.source_group:
-        # Utiliser la langue appropriée
+        # Utiliser la langue appropriée pour les groupes
         source_books = get_books_for_category(request_data.source_group, language)
         source_book_names = {book.lower() for book in source_books}
         pool_source = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
+        
+        if not pool_source:
+            error_msg = {
+                "fr": f"Aucun verset trouvé pour le groupe '{request_data.source_group}'.",
+                "en": f"No verses found for the group '{request_data.source_group}'."
+            }
+            return {"error": error_msg.get(language, error_msg["fr"])}
 
     if not pool_source:
-        raise HTTPException(status_code=400, detail="La source choisie est vide.")
+        error_msg = {
+            "fr": "La source choisie est vide.",
+            "en": "The chosen source is empty."
+        }
+        raise HTTPException(status_code=400, detail=error_msg.get(language, error_msg["fr"]))
 
+    # ✅ Choisir un verset aléatoire
     verset_correct = random.choice(pool_source)
     texte_de_la_question = verset_correct.get("text", "")
     
     options = set()
     reponse_correcte = ""
 
+    # ✅ Générer les options selon la difficulté
     if is_specific_book:
         if request_data.difficulty == "facile":
+            # Facile : Livre + Chapitre
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
             options.add(reponse_correcte)
-            pool_pertinent = {f"{v.get('book_name')} {v.get('chapter')}" for v in pool_source if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte}
-            pool_general = {f"{v.get('book_name')} {v.get('chapter')}" for v in versets if v.get("book_name") != request_data.source_book}
-            if len(pool_pertinent) >= 2: options.update(random.sample(list(pool_pertinent), 2))
-            if len(options) < 4 and pool_general: options.add(random.choice(list(pool_general)))
-        else:
+            
+            # Distracteurs du même livre
+            pool_pertinent = {
+                f"{v.get('book_name')} {v.get('chapter')}" 
+                for v in pool_source 
+                if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte
+            }
+            
+            # Distracteurs d'autres livres
+            pool_general = {
+                f"{v.get('book_name')} {v.get('chapter')}" 
+                for v in versets 
+                if v.get("book_name", "").lower() != request_data.source_book.lower()
+            }
+            
+            if len(pool_pertinent) >= 2: 
+                options.update(random.sample(list(pool_pertinent), 2))
+            if len(options) < 4 and pool_general: 
+                options.add(random.choice(list(pool_general)))
+                
+        else:  # Moyen ou Difficile
+            # Livre + Chapitre + Verset
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
             options.add(reponse_correcte)
+            
             pool_distracteurs = [v for v in pool_source if v != verset_correct]
             if len(pool_distracteurs) >= 3:
                 for d in random.sample(pool_distracteurs, 3):
                     options.add(f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}")
     else:
         if request_data.difficulty == "facile":
+            # Facile : Nom du livre uniquement
             reponse_correcte = verset_correct.get("book_name")
             options.add(reponse_correcte)
-            pool_pertinent = {v.get("book_name") for v in pool_source if v.get("book_name") != reponse_correcte}
-            pool_general = {v.get("book_name") for v in versets if v.get("book_name", "").lower() not in source_book_names}
-            if len(pool_pertinent) >= 2: options.update(random.sample(list(pool_pertinent), 2))
-            if len(options) < 4 and pool_general: options.add(random.choice(list(pool_general)))
+            
+            pool_pertinent = {
+                v.get("book_name") 
+                for v in pool_source 
+                if v.get("book_name") != reponse_correcte
+            }
+            
+            pool_general = {
+                v.get("book_name") 
+                for v in versets 
+                if v.get("book_name", "").lower() not in source_book_names
+            }
+            
+            if len(pool_pertinent) >= 2: 
+                options.update(random.sample(list(pool_pertinent), 2))
+            if len(options) < 4 and pool_general: 
+                options.add(random.choice(list(pool_general)))
+                
         elif request_data.difficulty == "moyen":
+            # Moyen : Livre + Chapitre
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
             options.add(reponse_correcte)
-            pool_distracteurs = [v for v in pool_source if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte]
+            
+            pool_distracteurs = [
+                v for v in pool_source 
+                if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte
+            ]
+            
             while len(options) < 4 and pool_distracteurs:
                 d = random.choice(pool_distracteurs)
                 options.add(f"{d.get('book_name')} {d.get('chapter')}")
                 pool_distracteurs.remove(d)
-        else:
+                
+        else:  # Difficile
+            # Difficile : Livre + Chapitre + Verset
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
             options.add(reponse_correcte)
+            
             distracteurs_pool = [v for v in pool_source if v != verset_correct]
             if len(distracteurs_pool) >= 3:
                 for d in random.sample(distracteurs_pool, 3):
                     options.add(f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}")
 
+    # ✅ Compléter avec des distracteurs aléatoires si nécessaire
     options_list = list(options)
-    while len(options_list) < 4:
+    tentatives = 0
+    while len(options_list) < 4 and tentatives < 10:
         d = random.choice(versets)
-        options_list.append(f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}")
+        new_option = f"{d.get('book_name')} {d.get('chapter')}:{d.get('verse')}"
+        if new_option not in options_list:
+            options_list.append(new_option)
+        tentatives += 1
+    
     random.shuffle(options_list)
+
+    print(f"✅ Question de référence générée en {language}")
+    print(f"   Texte: {texte_de_la_question[:50]}...")
+    print(f"   Réponse: {reponse_correcte}")
+    print(f"   Options: {len(options_list)}")
 
     return {
         "question_text": texte_de_la_question,
         "options": options_list,
         "reponse_correcte": reponse_correcte
     }
+    
 
 @router.post("/qcm/random")
 def jeu_qcm_aleatoire(data: ReferenceRequest, request: Request):
