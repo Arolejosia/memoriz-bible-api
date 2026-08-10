@@ -734,9 +734,14 @@ def get_livres(request: Request):
     """Retourne la liste des livres avec leur nombre de chapitres, selon la langue."""
     language = getattr(request.state, "language", "fr")
     verses = bible_loader.get_verses(language)
+     # 🔍 DEBUG TEMPORAIRE — à retirer après diagnostic
+    noms_bruts = sorted(set(v.get("book_name") for v in verses))
+    for n in noms_bruts:
+        print(f"'{n}'")
 
     if not verses:
         return []
+    
 
     # Calculer le nombre de chapitres réel par livre à partir des données
     chapitres_par_livre = {}
