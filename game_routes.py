@@ -727,3 +727,43 @@ def get_unscrambled_verse_game(data: RemettreEnOrdreRequest, request: Request):
         return {"versets": [jeu_data]}
     except Exception as e:
         return {"error": f"Une erreur interne est survenue: {e}"}
+
+
+@router.get("/livres")
+def get_livres(request: Request):
+    """Retourne la liste des livres avec leur nombre de chapitres, selon la langue."""
+    language = getattr(request.state, "language", "fr")
+    verses = bible_loader.get_verses(language)
+
+    if not verses:
+        return []
+
+    # Calculer le nombre de chapitres réel par livre à partir des données
+    chapitres_par_livre = {}
+    for v in verses:
+        livre = v.get("book_name")
+        chap = v.get("chapter")
+        if livre is None or chap is None:
+            continue
+        chap = int(chap)
+        if livre not in chapitres_par_livre or chap > chapitres_par_livre[livre]:
+            chapitres_par_livre[livre] = chap
+
+    # Respecter l'ordre canonique via BOOK_GROUPS (AT puis NT)
+    ordre = (
+        BOOK_GROUPS["ancien_testament"][language]
+        + BOOK_GROUPS["nouveau_testament"][language]
+    )
+
+    resultat = [
+        {
+            "nom": livre,
+            "nb_chapitres": chapitres_par_livre[livre],
+            "testament": "AT" if livre in BOOK_GROUPS["ancien_testament"][language] else "NT",
+        }
+        for livre in ordre
+        if livre in chapitres_par_livre
+    ]
+
+    print(f"✅ /livres appelé en {language} → {len(resultat)} livres retournés")
+    return resultat
