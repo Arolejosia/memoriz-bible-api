@@ -11,9 +11,8 @@ app.add_middleware(
     allow_origins=[
         "https://memorizbible.web.app",
         "https://memorizbible.firebaseapp.com",
-        "http://localhost",
-        "http://localhost:8080",
     ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
