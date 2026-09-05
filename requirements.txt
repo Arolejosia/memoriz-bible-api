@@ -43,3 +43,4 @@ h11==0.16.0
 filelock==3.18.0
 eval-type-backport==0.2.2
 firebase-admin==6.5.0
+email-validator==2.2.0
