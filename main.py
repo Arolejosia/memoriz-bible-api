@@ -2,9 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from game_routes import router as game_router # type: ignore
 from duel_routes import router as duel_router # type: ignore
+from email_verification_route import router as email_router  # ← NOUVELLE LIGNE
 
 app = FastAPI()
-
 # ✅ CORS - AJOUTER CECI EN PREMIER
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +17,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # Middleware langue
 @app.middleware("http")
 async def add_language_to_request(request: Request, call_next):
@@ -35,6 +34,7 @@ def health():
 
 app.include_router(game_router)
 app.include_router(duel_router)
+app.include_router(email_router)  # ← NOUVELLE LIGNE
 
 if __name__ == "__main__":
     import uvicorn
