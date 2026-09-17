@@ -1,10 +1,8 @@
 """
-Route FastAPI : génère un lien de vérification Firebase et l'envoie
-via Zoho SMTP plutôt que via l'envoi automatique de Firebase.
-
-À monter dans ton app FastAPI existante (main.py) avec :
-    from email_verification_route import router as email_router
-    app.include_router(email_router)
+Version TEMPORAIRE de debug — à remettre comme avant une fois le bug trouvé.
+Ajoute juste un traceback complet dans le message d'erreur retourné,
+pour voir directement dans Flutter (ou Postman/navigateur) ce qui plante,
+sans dépendre des logs Render.
 """
 
 from fastapi import APIRouter, HTTPException
@@ -12,15 +10,12 @@ from pydantic import BaseModel, EmailStr
 import firebase_admin
 from firebase_admin import auth, credentials
 import os
+import traceback  # ← ajouté
 
 from email_service import send_verification_email
 
 router = APIRouter()
 
-# --- Initialisation Firebase Admin (une seule fois au démarrage du serveur) ---
-# Le fichier de clé de service doit être stocké de façon sécurisée
-# (variable d'environnement contenant le JSON, ou secret file sur Render),
-# jamais commité dans le repo.
 if not firebase_admin._apps:
     cred = credentials.Certificate({
         "type": "service_account",
@@ -35,23 +30,20 @@ if not firebase_admin._apps:
 class VerificationRequest(BaseModel):
     email: EmailStr
     display_name: str = ""
-    lang: str = "fr"  # "fr" ou "en"
+    lang: str = "fr"
 
 
 @router.post("/api/send-verification-email")
 def send_verification(payload: VerificationRequest):
-    """
-    Appelé depuis l'app Flutter juste après la création du compte,
-    à la place de user.sendEmailVerification().
-    """
     try:
-        # Génère le lien officiel Firebase (même mécanisme de vérification,
-        # juste envoyé par nous plutôt que par Firebase directement)
         link = auth.generate_email_verification_link(payload.email)
     except auth.UserNotFoundError:
         raise HTTPException(status_code=404, detail="User not found")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating link: {e}")
+        # ← on renvoie le traceback complet dans le detail, temporairement
+        tb = traceback.format_exc()
+        print(tb)  # apparaîtra aussi dans les logs Render
+        raise HTTPException(status_code=500, detail=f"Error generating link: {e}\n\n{tb}")
 
     try:
         send_verification_email(
@@ -61,6 +53,8 @@ def send_verification(payload: VerificationRequest):
             lang=payload.lang,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error sending email: {e}")
+        tb = traceback.format_exc()
+        print(tb)  # apparaîtra aussi dans les logs Render
+        raise HTTPException(status_code=500, detail=f"Error sending email: {e}\n\n{tb}")
 
     return {"status": "sent"}
