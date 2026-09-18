@@ -1,26 +1,29 @@
 """
-Service d'envoi de courriel via Zoho SMTP.
-Remplace l'envoi automatique de Firebase pour la vérification d'email,
-afin de contrôler le contenu et éviter le domaine partagé firebaseapp.com
-(qui est actuellement bloqué en édition et sujet à un mauvais taux de délivrabilité).
+Service d'envoi de courriel via l'API HTTP de Resend.
+Remplace SMTP (bloqué par Render) et ZeptoMail (config trop capricieuse).
+
+Prérequis :
+1. Crée un compte sur https://resend.com (gratuit, 3000 emails/mois, 100/jour)
+2. Dans Resend > Domains, ajoute myezerdigital.ca
+3. Resend affiche 3 enregistrements DNS (SPF, DKIM, et parfois un DMARC recommandé) —
+   ajoute-les chez ton fournisseur DNS, la vérification est généralement rapide (~qqs minutes)
+4. Une fois le domaine "Verified" dans Resend, va dans API Keys > Create API Key
+5. Mets cette clé dans la variable d'environnement RESEND_API_KEY sur Render
 """
 
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
 
-# --- Configuration Zoho (à mettre dans les variables d'environnement sur Render) ---
-ZOHO_SMTP_HOST = "smtp.zoho.com"
-ZOHO_SMTP_PORT = 587
-ZOHO_SENDER_EMAIL = os.environ["ZOHO_SENDER_EMAIL"]      # ex: noreply@myezerdigital.ca
-ZOHO_SENDER_PASSWORD = os.environ["ZOHO_SENDER_PASSWORD"]  # mot de passe d'application Zoho
+RESEND_API_URL = "https://api.resend.com/emails"
+RESEND_API_KEY = os.environ["RESEND_API_KEY"]
+
+ZOHO_SENDER_EMAIL = os.environ["ZOHO_SENDER_EMAIL"]  # ex: contact@myezerdigital.ca
 ZOHO_SENDER_NAME = "L'équipe MemorizBible"
 
 
 def send_verification_email(to_email: str, verification_link: str, display_name: str, lang: str = "fr") -> None:
     """
-    Envoie un courriel de vérification personnalisé via Zoho SMTP.
+    Envoie un courriel de vérification personnalisé via l'API Resend.
 
     to_email: adresse du destinataire
     verification_link: lien généré par Firebase Admin (auth.generate_email_verification_link)
@@ -28,20 +31,28 @@ def send_verification_email(to_email: str, verification_link: str, display_name:
     lang: "fr" ou "en"
     """
     subject, html_body, text_body = _build_content(verification_link, display_name, lang)
+    _send_via_resend(to_email=to_email, subject=subject, html_body=html_body, text_body=text_body)
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{ZOHO_SENDER_NAME} <{ZOHO_SENDER_EMAIL}>"
-    msg["To"] = to_email
 
-    # Toujours inclure une version texte brut ET html — améliore la délivrabilité
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+def _send_via_resend(to_email: str, subject: str, html_body: str, text_body: str) -> None:
+    payload = {
+        "from": f"{ZOHO_SENDER_NAME} <{ZOHO_SENDER_EMAIL}>",
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body,
+    }
 
-    with smtplib.SMTP(ZOHO_SMTP_HOST, ZOHO_SMTP_PORT) as server:
-        server.starttls()
-        server.login(ZOHO_SENDER_EMAIL, ZOHO_SENDER_PASSWORD)
-        server.sendmail(ZOHO_SENDER_EMAIL, [to_email], msg.as_string())
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(RESEND_API_URL, json=payload, headers=headers, timeout=15)
+
+    if response.status_code >= 300:
+        # On remonte le détail exact retourné par Resend pour faciliter le debug
+        raise Exception(f"Resend error {response.status_code}: {response.text}")
 
 
 def _build_content(link: str, name: str, lang: str) -> tuple[str, str, str]:
