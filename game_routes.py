@@ -477,32 +477,51 @@ def get_single_verse(ref: str = Query(...), request: Request = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/generer-question-reference")
 def generate_reference_question(request_data: ReferenceQuestionRequest, request: Request):
     """Génère une question de référence avec support multilingue complet."""
     language = getattr(request.state, "language", "fr")
     print(f"🎯 /generer-question-reference appelé avec language={language}")
-    
+
     # ✅ Charger les versets dans la langue demandée
     versets = bible_loader.get_verses(language)
-    
+
     if not versets:
         error_msg = {
             "fr": "Aucun verset disponible pour cette langue.",
             "en": "No verses available for this language."
         }
         return {"error": error_msg.get(language, error_msg["fr"])}
-    
+
     pool_source = versets
     is_specific_book = request_data.source_book is not None
     source_book_names = set()
 
-    # ✅ Filtrer selon le livre ou le groupe
-    if is_specific_book:
+    # ✅ Filtrer selon la source (versets maîtrisés, livre, ou groupe)
+    if request_data.source_refs:
+        # Liste exacte de références (ex: versets maîtrisés de la bibliothèque)
+        refs_normalisees = {ref.strip().lower() for ref in request_data.source_refs}
+
+        def _ref_du_verset(v):
+            return f"{v.get('book_name')} {v.get('chapter')}:{v.get('verse')}".strip().lower()
+
+        pool_source = [v for v in versets if _ref_du_verset(v) in refs_normalisees]
+
+        if not pool_source:
+            error_msg = {
+                "fr": "Aucun verset trouvé pour les références fournies.",
+                "en": "No verses found for the provided references.",
+            }
+            return {"error": error_msg.get(language, error_msg["fr"])}
+
+        is_specific_book = True  # réutilise le format détaillé Livre+Chapitre:Verset
+
+    elif is_specific_book:
         # Normaliser le nom du livre pour la comparaison
         source_book_lower = request_data.source_book.lower()
         pool_source = [v for v in versets if v.get("book_name", "").lower() == source_book_lower]
-        
+
         if not pool_source:
             print(f"⚠️ Aucun verset trouvé pour le livre '{request_data.source_book}'")
             error_msg = {
@@ -510,13 +529,13 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
                 "en": f"No verses found for the book '{request_data.source_book}'."
             }
             return {"error": error_msg.get(language, error_msg["fr"])}
-            
+
     elif request_data.source_group:
         # Utiliser la langue appropriée pour les groupes
         source_books = get_books_for_category(request_data.source_group, language)
         source_book_names = {book.lower() for book in source_books}
         pool_source = [v for v in versets if v.get("book_name", "").lower() in source_book_names]
-        
+
         if not pool_source:
             error_msg = {
                 "fr": f"Aucun verset trouvé pour le groupe '{request_data.source_group}'.",
@@ -534,7 +553,7 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
     # ✅ Choisir un verset aléatoire
     verset_correct = random.choice(pool_source)
     texte_de_la_question = verset_correct.get("text", "")
-    
+
     options = set()
     reponse_correcte = ""
 
@@ -544,31 +563,36 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
             # Facile : Livre + Chapitre
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
             options.add(reponse_correcte)
-            
-            # Distracteurs du même livre
+
+            # Distracteurs du même livre (ou du même pool_source si mode "versets maîtrisés")
             pool_pertinent = {
-                f"{v.get('book_name')} {v.get('chapter')}" 
-                for v in pool_source 
+                f"{v.get('book_name')} {v.get('chapter')}"
+                for v in pool_source
                 if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte
             }
-            
-            # Distracteurs d'autres livres
+
+            # Distracteurs d'autres livres — protégé contre source_book == None
+            nom_livre_exclu = (
+                request_data.source_book.lower()
+                if request_data.source_book
+                else None
+            )
             pool_general = {
-                f"{v.get('book_name')} {v.get('chapter')}" 
-                for v in versets 
-                if v.get("book_name", "").lower() != request_data.source_book.lower()
+                f"{v.get('book_name')} {v.get('chapter')}"
+                for v in versets
+                if nom_livre_exclu is None or v.get("book_name", "").lower() != nom_livre_exclu
             }
-            
-            if len(pool_pertinent) >= 2: 
+
+            if len(pool_pertinent) >= 2:
                 options.update(random.sample(list(pool_pertinent), 2))
-            if len(options) < 4 and pool_general: 
+            if len(options) < 4 and pool_general:
                 options.add(random.choice(list(pool_general)))
-                
+
         else:  # Moyen ou Difficile
             # Livre + Chapitre + Verset
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
             options.add(reponse_correcte)
-            
+
             pool_distracteurs = [v for v in pool_source if v != verset_correct]
             if len(pool_distracteurs) >= 3:
                 for d in random.sample(pool_distracteurs, 3):
@@ -578,44 +602,44 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
             # Facile : Nom du livre uniquement
             reponse_correcte = verset_correct.get("book_name")
             options.add(reponse_correcte)
-            
+
             pool_pertinent = {
-                v.get("book_name") 
-                for v in pool_source 
+                v.get("book_name")
+                for v in pool_source
                 if v.get("book_name") != reponse_correcte
             }
-            
+
             pool_general = {
-                v.get("book_name") 
-                for v in versets 
+                v.get("book_name")
+                for v in versets
                 if v.get("book_name", "").lower() not in source_book_names
             }
-            
-            if len(pool_pertinent) >= 2: 
+
+            if len(pool_pertinent) >= 2:
                 options.update(random.sample(list(pool_pertinent), 2))
-            if len(options) < 4 and pool_general: 
+            if len(options) < 4 and pool_general:
                 options.add(random.choice(list(pool_general)))
-                
+
         elif request_data.difficulty == "moyen":
             # Moyen : Livre + Chapitre
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}"
             options.add(reponse_correcte)
-            
+
             pool_distracteurs = [
-                v for v in pool_source 
+                v for v in pool_source
                 if f"{v.get('book_name')} {v.get('chapter')}" != reponse_correcte
             ]
-            
+
             while len(options) < 4 and pool_distracteurs:
                 d = random.choice(pool_distracteurs)
                 options.add(f"{d.get('book_name')} {d.get('chapter')}")
                 pool_distracteurs.remove(d)
-                
+
         else:  # Difficile
             # Difficile : Livre + Chapitre + Verset
             reponse_correcte = f"{verset_correct.get('book_name')} {verset_correct.get('chapter')}:{verset_correct.get('verse')}"
             options.add(reponse_correcte)
-            
+
             distracteurs_pool = [v for v in pool_source if v != verset_correct]
             if len(distracteurs_pool) >= 3:
                 for d in random.sample(distracteurs_pool, 3):
@@ -630,7 +654,7 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
         if new_option not in options_list:
             options_list.append(new_option)
         tentatives += 1
-    
+
     random.shuffle(options_list)
 
     print(f"✅ Question de référence générée en {language}")
@@ -643,7 +667,6 @@ def generate_reference_question(request_data: ReferenceQuestionRequest, request:
         "options": options_list,
         "reponse_correcte": reponse_correcte
     }
-    
 
 @router.post("/qcm/random")
 def jeu_qcm_aleatoire(data: ReferenceRequest, request: Request):
